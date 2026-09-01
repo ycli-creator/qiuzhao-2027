@@ -7,15 +7,22 @@
   <title>2027 届秋招 · 设计岗追踪</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fira+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="wrap">
     <header>
-      <div class="kicker">Private · 2027 campus</div>
+      <div class="who-row">
+        <div class="kicker">2027 campus · 共用名单</div>
+        <div id="whoBar" class="who-bar" hidden>
+          <span>进度空间 <b id="whoName"></b></span>
+          <span id="syncState" class="sync"></span>
+          <button type="button" id="switchWho">切换</button>
+        </div>
+      </div>
       <h1>秋招追踪 · 设计 / UX / 动效</h1>
-      <p class="lead">面向 2027 届。先扫公司、窗口、是否笔试面试，再记下自己的进度。进度只存在这台电脑，不要把这个仓库或页面公开。</p>
+      <p class="lead">面向 2027 届。公司和招聘窗口共用；投递进度按名字分开存，换电脑选同一个名字即可继续。</p>
       <p class="warn">截止日期和是否仍在招以官网为准。表内信息按 2026-09-01 能核到的公开材料整理，投之前点「官网」复核。</p>
     </header>
 
@@ -71,6 +78,8 @@
       </label>
     </div>
 
+    <div id="legend" class="legend" aria-label="进度颜色"></div>
+
     <div class="meta-row">
       <span id="checked"></span>
       <span id="count"></span>
@@ -96,9 +105,25 @@
     </div>
 
     <footer>
-      私有本地页。作品集：之后在 Yone 站点查看。Skills 目录：Works-2026。
+      公司和招聘信息共用。进度按名字同步到云端，你和朋友各改各的。
     </footer>
   </div>
+
+  <div id="gate" class="gate" hidden>
+    <div class="gate-card">
+      <p class="kicker">先选空间</p>
+      <h2>这是谁的进度？</h2>
+      <p>公司和招聘窗口共用一份。投递进度只写在你选的名字下面；换电脑也选同一个名字。</p>
+      <div id="gateUsers" class="gate-users"></div>
+      <form id="gateForm" class="gate-form">
+        <input id="gateName" maxlength="16" placeholder="输入名字，例如 超" autocomplete="nickname" />
+        <button type="submit">进入</button>
+      </form>
+      <p id="gateLegacy" class="gate-note" hidden>这台设备上已有一份未归属的进度，会归到你这次输入的名字下。</p>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
   <script src="data.js"></script>
   <script src="app.js"></script>
 </body>

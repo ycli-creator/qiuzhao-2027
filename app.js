@@ -1,6 +1,15 @@
-const STORE = "qiuzhao-2027-status";
+const WHO_KEY = "qiuzhao-2027-who";
+const USERS_KEY = "qiuzhao-2027-users";
+const LEGACY_STORE = "qiuzhao-2027-status";
+const STAMP_PREFIX = "qiuzhao-2027-updated:";
 const data = window.QIUZHAO;
-const mine = JSON.parse(localStorage.getItem(STORE) || "{}");
+const cloudCfg = window.QIUZHAO_CLOUD || {};
+const cloud = (cloudCfg.url && cloudCfg.anonKey && window.supabase)
+  ? window.supabase.createClient(cloudCfg.url, cloudCfg.anonKey)
+  : null;
+let who = "";
+let mine = {};
+let saveGen = 0;
 
 const $ = (id) => document.getElementById(id);
 const hiringLabel = {
@@ -8,6 +17,21 @@ const hiringLabel = {
   rolling: "滚动",
   closing: "将截止",
   unknown: "待核"
+};
+
+const statusSlug = {
+  未投: "idle",
+  已投: "sent",
+  测评: "eval",
+  笔试: "exam",
+  一面: "r1",
+  二面: "r2",
+  三面: "r3",
+  HR: "hr",
+  意向: "intent",
+  Offer: "offer",
+  挂: "fail",
+  拒: "reject"
 };
 
 const filters = {
@@ -19,8 +43,186 @@ const filters = {
   designOnly: true
 };
 
+function storeKey(name) {
+  return `${LEGACY_STORE}:${name}`;
+}
+
+function normalizeName(name) {
+  return String(name || "").trim().replace(/\s+/g, " ").slice(0, 16);
+}
+
+function readJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function loadUsers() {
+  const users = readJson(USERS_KEY, []);
+  return Array.isArray(users) ? users.filter(Boolean) : [];
+}
+
+function saveUsers(users) {
+  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+}
+
+function hasLegacyProgress() {
+  const legacy = readJson(LEGACY_STORE, {});
+  return legacy && typeof legacy === "object" && Object.keys(legacy).length > 0;
+}
+
+function loadMine(name) {
+  const scoped = readJson(storeKey(name), null);
+  if (scoped && typeof scoped === "object") return scoped;
+  if (!loadUsers().length && hasLegacyProgress()) {
+    return readJson(LEGACY_STORE, {});
+  }
+  return {};
+}
+
+function stampKey(name) {
+  return STAMP_PREFIX + name;
+}
+
+function loadStamp(name) {
+  return localStorage.getItem(stampKey(name)) || "";
+}
+
+function writeLocal(name, status, iso) {
+  localStorage.setItem(storeKey(name), JSON.stringify(status));
+  localStorage.setItem(stampKey(name), iso);
+}
+
+function setSync(text, kind) {
+  const el = $("syncState");
+  if (!el) return;
+  el.textContent = text;
+  el.className = "sync" + (kind ? ` ${kind}` : "");
+}
+
+async function listCloudUsers() {
+  if (!cloud) return [];
+  const { data: rows, error } = await cloud.from("qiuzhao_progress").select("who");
+  if (error || !rows) return [];
+  return rows.map((row) => row.who).filter(Boolean);
+}
+
+async function pullCloud(name) {
+  if (!cloud) return null;
+  const { data: row, error } = await cloud
+    .from("qiuzhao_progress")
+    .select("status, updated_at")
+    .eq("who", name)
+    .maybeSingle();
+  if (error) throw error;
+  return row;
+}
+
+async function pushCloud(name, status, iso) {
+  if (!cloud) return false;
+  const { error } = await cloud.from("qiuzhao_progress").upsert({
+    who: name,
+    status,
+    updated_at: iso
+  });
+  if (error) throw error;
+  return true;
+}
+
 function save() {
-  localStorage.setItem(STORE, JSON.stringify(mine));
+  if (!who) return;
+  const iso = new Date().toISOString();
+  writeLocal(who, mine, iso);
+  if (!cloud) {
+    setSync("仅本机", "");
+    return;
+  }
+  const gen = ++saveGen;
+  setSync("同步中", "pending");
+  pushCloud(who, mine, iso)
+    .then(() => {
+      if (gen === saveGen) setSync("已同步", "ok");
+    })
+    .catch(() => {
+      if (gen === saveGen) setSync("同步失败，已留在本机", "err");
+    });
+}
+
+async function enterAs(name) {
+  const next = normalizeName(name);
+  if (!next) return false;
+  const users = loadUsers();
+  const isFirst = users.length === 0;
+  if (!users.includes(next)) {
+    users.push(next);
+    saveUsers(users);
+  }
+  who = next;
+  mine = loadMine(next);
+  if (isFirst && hasLegacyProgress() && !localStorage.getItem(storeKey(next))) {
+    writeLocal(next, mine, new Date().toISOString());
+  }
+  localStorage.setItem(WHO_KEY, next);
+  $("gate").hidden = true;
+  $("whoBar").hidden = false;
+  $("whoName").textContent = next;
+  stats();
+  render();
+
+  if (!cloud) {
+    setSync("仅本机", "");
+    return true;
+  }
+
+  setSync("读取中", "pending");
+  try {
+    const remote = await pullCloud(next);
+    const remoteStamp = remote?.updated_at || "";
+    const localStamp = loadStamp(next);
+    const remoteStatus = remote?.status && typeof remote.status === "object" ? remote.status : null;
+    if (remoteStatus && (!localStamp || remoteStamp >= localStamp)) {
+      mine = remoteStatus;
+      writeLocal(next, mine, remoteStamp);
+      stats();
+      render();
+      setSync("已同步", "ok");
+    } else if (Object.keys(mine).length) {
+      const iso = localStamp || new Date().toISOString();
+      await pushCloud(next, mine, iso);
+      writeLocal(next, mine, iso);
+      setSync("已同步", "ok");
+    } else {
+      setSync("已同步", "ok");
+    }
+  } catch {
+    setSync("云端读不到，先用本机", "err");
+  }
+  return true;
+}
+
+async function showGate() {
+  const names = new Set(loadUsers());
+  try {
+    (await listCloudUsers()).forEach((name) => names.add(name));
+  } catch {
+    /* 云端名单读不到就只用本机 */
+  }
+  $("gateUsers").replaceChildren(
+    ...[...names].map((name) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.dataset.who = name;
+      btn.textContent = name;
+      return btn;
+    })
+  );
+  $("gateLegacy").hidden = !(loadUsers().length === 0 && hasLegacyProgress());
+  $("gate").hidden = false;
+  $("gateName").value = "";
+  $("gateName").focus();
 }
 
 function isDesignRole(role) {
@@ -60,13 +262,13 @@ function stats() {
     if (!["未投", "挂", "拒"].includes(s)) counts.流程中 += 1;
   });
   $("stats").innerHTML = [
-    ["公司", data.companies.length],
-    ["未投", counts.未投],
-    ["已启动", counts.流程中],
-    ["面试中", counts.面试],
-    ["Offer", counts.Offer],
-    ["挂 / 拒", counts.结束]
-  ].map(([k, v]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join("");
+    ["公司", data.companies.length, "all"],
+    ["未投", counts.未投, "idle"],
+    ["已启动", counts.流程中, "sent"],
+    ["面试中", counts.面试, "r1"],
+    ["Offer", counts.Offer, "offer"],
+    ["挂 / 拒", counts.结束, "fail"]
+  ].map(([k, v, slug]) => `<div class="stat s-${slug}"><b>${v}</b><span>${k}</span></div>`).join("");
 }
 
 function render() {
@@ -78,11 +280,12 @@ function render() {
   }
   $("rows").innerHTML = rows.map((c) => {
     const status = mine[c.id] || "未投";
+    const slug = statusSlug[status] || "idle";
     const options = data.statuses.map((s) =>
       `<option value="${s}" ${s === status ? "selected" : ""}>${s}</option>`
     ).join("");
     return `
-      <tr class="${status === "挂" || status === "拒" ? "dim" : ""}">
+      <tr class="row row-${slug}">
         <td>
           <span class="name">${c.name}</span>
           <span class="sub">${c.tier} · ${c.industry}</span>
@@ -94,7 +297,7 @@ function render() {
         <td class="hide-sm">${c.interview}</td>
         <td><span class="hiring ${c.hiring}">${hiringLabel[c.hiring]}</span><span class="sub">${c.deadline || "截止逐岗"}</span></td>
         <td>
-          <select class="mine ${status}" data-id="${c.id}" aria-label="${c.name} 我的进度">${options}</select>
+          <select class="mine s-${slug}" data-id="${c.id}" aria-label="${c.name} 我的进度">${options}</select>
         </td>
         <td>
           <a class="site" href="${c.url}" target="_blank" rel="noreferrer">官网</a>
@@ -128,9 +331,31 @@ function bind() {
     stats();
     render();
   });
+  $("gateForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    enterAs($("gateName").value);
+  });
+  $("gateUsers").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-who]");
+    if (btn) enterAs(btn.dataset.who);
+  });
+  $("switchWho").addEventListener("click", () => {
+    showGate();
+  });
 }
 
 $("checked").textContent = `数据核对日 ${data.checkedAt} · ${data.cohort} · ${data.graduateWindow}`;
-stats();
+$("legend").innerHTML = data.statuses.map((s) => {
+  const slug = statusSlug[s] || "idle";
+  return `<span class="row-${slug}"><i style="background:var(--row-ink)"></i>${s}</span>`;
+}).join("");
 bind();
-render();
+
+const remembered = normalizeName(localStorage.getItem(WHO_KEY) || "");
+if (remembered && loadUsers().includes(remembered)) {
+  enterAs(remembered);
+} else {
+  showGate();
+  stats();
+  render();
+}
