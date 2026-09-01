@@ -10,6 +10,11 @@ const cloud = (cloudCfg.url && cloudCfg.anonKey && window.supabase)
 let who = "";
 let mine = {};
 let saveGen = 0;
+let sessionPin = "";
+let sessionSalt = null;
+let sessionKey = null;
+let pendingName = "";
+let pinMode = "create";
 
 const $ = (id) => document.getElementById(id);
 const hiringLabel = {
@@ -74,13 +79,100 @@ function hasLegacyProgress() {
   return legacy && typeof legacy === "object" && Object.keys(legacy).length > 0;
 }
 
-function loadMine(name) {
+function isVault(value) {
+  return Boolean(value && value._enc === 1 && value.ct && value.iv && value.salt);
+}
+
+function isPlainStatus(value) {
+  return Boolean(value && typeof value === "object" && !isVault(value) && !Array.isArray(value));
+}
+
+function loadStored(name) {
   const scoped = readJson(storeKey(name), null);
   if (scoped && typeof scoped === "object") return scoped;
   if (!loadUsers().length && hasLegacyProgress()) {
     return readJson(LEGACY_STORE, {});
   }
-  return {};
+  return null;
+}
+
+function bytesToB64(bytes) {
+  let bin = "";
+  bytes.forEach((b) => {
+    bin += String.fromCharCode(b);
+  });
+  return btoa(bin);
+}
+
+function b64ToBytes(text) {
+  const bin = atob(text);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function deriveKey(pin, salt, name) {
+  const material = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(`${name}:${pin}`),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: 120000, hash: "SHA-256" },
+    material,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function encryptStatus(status, pin, name, saltBytes) {
+  const salt = saltBytes || crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(pin, salt, name);
+  const ct = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    new TextEncoder().encode(JSON.stringify(status))
+  );
+  return {
+    vault: {
+      _enc: 1,
+      salt: bytesToB64(salt),
+      iv: bytesToB64(iv),
+      ct: bytesToB64(new Uint8Array(ct))
+    },
+    salt,
+    key
+  };
+}
+
+async function decryptStatus(vault, pin, name) {
+  const salt = b64ToBytes(vault.salt);
+  const iv = b64ToBytes(vault.iv);
+  const key = await deriveKey(pin, salt, name);
+  const raw = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    key,
+    b64ToBytes(vault.ct)
+  );
+  const parsed = JSON.parse(new TextDecoder().decode(raw));
+  if (!parsed || typeof parsed !== "object") throw new Error("bad vault");
+  return { status: parsed, salt, key };
+}
+
+function digitsOnly(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 8);
+}
+
+function validPin(value) {
+  return /^\d{8}$/.test(value);
+}
+
+function canCrypto() {
+  return Boolean(window.crypto && window.crypto.subtle);
 }
 
 function stampKey(name) {
@@ -91,9 +183,15 @@ function loadStamp(name) {
   return localStorage.getItem(stampKey(name)) || "";
 }
 
-function writeLocal(name, status, iso) {
-  localStorage.setItem(storeKey(name), JSON.stringify(status));
+function writeLocal(name, vault, iso) {
+  localStorage.setItem(storeKey(name), JSON.stringify(vault));
   localStorage.setItem(stampKey(name), iso);
+}
+
+function clearPlainCaches(name) {
+  const stored = name ? readJson(storeKey(name), null) : null;
+  if (isPlainStatus(stored)) localStorage.removeItem(storeKey(name));
+  localStorage.removeItem(LEGACY_STORE);
 }
 
 function setSync(text, kind) {
@@ -133,77 +231,163 @@ async function pushCloud(name, status, iso) {
 }
 
 function save() {
-  if (!who) return;
+  if (!who || !sessionPin) return;
   const iso = new Date().toISOString();
-  writeLocal(who, mine, iso);
-  if (!cloud) {
-    setSync("仅本机", "");
-    return;
-  }
   const gen = ++saveGen;
   setSync("同步中", "pending");
-  pushCloud(who, mine, iso)
-    .then(() => {
-      if (gen === saveGen) setSync("已同步", "ok");
+  encryptStatus(mine, sessionPin, who, sessionSalt)
+    .then(async ({ vault, salt, key }) => {
+      sessionSalt = salt;
+      sessionKey = key;
+      writeLocal(who, vault, iso);
+      if (cloud) await pushCloud(who, vault, iso);
+      if (gen === saveGen) setSync(cloud ? "已同步" : "仅本机", cloud ? "ok" : "");
     })
     .catch(() => {
       if (gen === saveGen) setSync("同步失败，已留在本机", "err");
     });
 }
 
-async function enterAs(name) {
+function resetSession() {
+  who = "";
+  mine = {};
+  sessionPin = "";
+  sessionSalt = null;
+  sessionKey = null;
+  pendingName = "";
+  $("whoBar").hidden = true;
+}
+
+function showPinError(text) {
+  $("pinError").hidden = !text;
+  $("pinError").textContent = text || "";
+}
+
+function showNameStep() {
+  $("nameStep").hidden = false;
+  $("pinStep").hidden = true;
+  $("pinInput").value = "";
+  $("pinConfirm").value = "";
+  $("pinConfirm").hidden = true;
+  showPinError("");
+  $("gateName").focus();
+}
+
+async function openPinStep(name) {
   const next = normalizeName(name);
   if (!next) return false;
+  if (!canCrypto()) {
+    showPinError("");
+    window.alert("当前打开方式不支持加密。请用网页链接打开，不要直接双击本地文件。");
+    return false;
+  }
+  pendingName = next;
+  let remote = null;
+  try {
+    remote = await pullCloud(next);
+  } catch {
+    remote = null;
+  }
+  const local = loadStored(next);
+  const locked = isVault(remote?.status) || isVault(local);
+  pinMode = locked ? "unlock" : "create";
+  $("nameStep").hidden = true;
+  $("pinStep").hidden = false;
+  $("pinKicker").textContent = next;
+  $("pinTitle").textContent = locked ? "输入 8 位密码" : "设置 8 位密码";
+  $("pinLead").textContent = locked
+    ? "输入这个名字的 8 位数字密码后才能看和改进度。"
+    : "第一次使用，请设一组 8 位数字密码。换电脑也用这一组，请自己记住。";
+  $("pinConfirm").hidden = locked;
+  $("pinInput").value = "";
+  $("pinConfirm").value = "";
+  $("pinSubmit").textContent = locked ? "进入" : "创建并进入";
+  showPinError("");
+  $("pinInput").focus();
+  return true;
+}
+
+function rememberUser(name) {
   const users = loadUsers();
-  const isFirst = users.length === 0;
-  if (!users.includes(next)) {
-    users.push(next);
+  if (!users.includes(name)) {
+    users.push(name);
     saveUsers(users);
   }
-  who = next;
-  mine = loadMine(next);
-  if (isFirst && hasLegacyProgress() && !localStorage.getItem(storeKey(next))) {
-    writeLocal(next, mine, new Date().toISOString());
-  }
-  localStorage.setItem(WHO_KEY, next);
+  localStorage.setItem(WHO_KEY, name);
+}
+
+function revealWorkspace(name) {
+  who = name;
+  rememberUser(name);
   $("gate").hidden = true;
   $("whoBar").hidden = false;
-  $("whoName").textContent = next;
+  $("whoName").textContent = name;
   stats();
   render();
+}
 
-  if (!cloud) {
-    setSync("仅本机", "");
-    return true;
+async function unlockWithPin(pin) {
+  const name = pendingName;
+  if (!validPin(pin)) {
+    showPinError("请输入 8 位数字");
+    return false;
+  }
+  if (pinMode === "create" && pin !== $("pinConfirm").value) {
+    showPinError("两次密码不一致");
+    return false;
   }
 
-  setSync("读取中", "pending");
+  let remote = null;
   try {
-    const remote = await pullCloud(next);
-    const remoteStamp = remote?.updated_at || "";
-    const localStamp = loadStamp(next);
-    const remoteStatus = remote?.status && typeof remote.status === "object" ? remote.status : null;
-    if (remoteStatus && (!localStamp || remoteStamp >= localStamp)) {
-      mine = remoteStatus;
-      writeLocal(next, mine, remoteStamp);
-      stats();
-      render();
-      setSync("已同步", "ok");
-    } else if (Object.keys(mine).length) {
-      const iso = localStamp || new Date().toISOString();
-      await pushCloud(next, mine, iso);
-      writeLocal(next, mine, iso);
-      setSync("已同步", "ok");
+    remote = await pullCloud(name);
+  } catch {
+    remote = null;
+  }
+  const local = loadStored(name);
+  const remoteVault = isVault(remote?.status) ? remote.status : null;
+  const localVault = isVault(local) ? local : null;
+  const remotePlain = isPlainStatus(remote?.status) ? remote.status : null;
+  const localPlain = isPlainStatus(local) ? local : null;
+  const remoteStamp = remote?.updated_at || "";
+  const localStamp = loadStamp(name);
+
+  try {
+    if (remoteVault || localVault) {
+      const preferRemote = Boolean(remoteVault) && (!localVault || !localStamp || remoteStamp >= localStamp);
+      const chosen = preferRemote ? remoteVault : (localVault || remoteVault);
+      const opened = await decryptStatus(chosen, pin, name);
+      mine = opened.status;
+      sessionPin = pin;
+      sessionSalt = opened.salt;
+      sessionKey = opened.key;
     } else {
-      setSync("已同步", "ok");
+      mine = remotePlain || localPlain || {};
+      const packed = await encryptStatus(mine, pin, name);
+      sessionPin = pin;
+      sessionSalt = packed.salt;
+      sessionKey = packed.key;
+      const iso = new Date().toISOString();
+      writeLocal(name, packed.vault, iso);
+      if (cloud) await pushCloud(name, packed.vault, iso);
     }
   } catch {
-    setSync("云端读不到，先用本机", "err");
+    showPinError("密码不对");
+    return false;
+  }
+
+  clearPlainCaches(name);
+  revealWorkspace(name);
+  if (remoteVault || localVault) {
+    setSync(cloud ? "已同步" : "仅本机", cloud ? "ok" : "");
+    save();
+  } else {
+    setSync(cloud ? "已同步" : "仅本机", cloud ? "ok" : "");
   }
   return true;
 }
 
 async function showGate() {
+  resetSession();
   const names = new Set(loadUsers());
   try {
     (await listCloudUsers()).forEach((name) => names.add(name));
@@ -221,8 +405,9 @@ async function showGate() {
   );
   $("gateLegacy").hidden = !(loadUsers().length === 0 && hasLegacyProgress());
   $("gate").hidden = false;
-  $("gateName").value = "";
-  $("gateName").focus();
+  showNameStep();
+  stats();
+  render();
 }
 
 function isDesignRole(role) {
@@ -333,15 +518,29 @@ function bind() {
   });
   $("gateForm").addEventListener("submit", (e) => {
     e.preventDefault();
-    enterAs($("gateName").value);
+    openPinStep($("gateName").value);
   });
   $("gateUsers").addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-who]");
-    if (btn) enterAs(btn.dataset.who);
+    if (btn) openPinStep(btn.dataset.who);
   });
   $("switchWho").addEventListener("click", () => {
     showGate();
   });
+  ["pinInput", "pinConfirm"].forEach((id) => {
+    $(id).addEventListener("input", (e) => {
+      e.target.value = digitsOnly(e.target.value);
+    });
+  });
+  $("pinForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    $("pinSubmit").disabled = true;
+    unlockWithPin($("pinInput").value)
+      .finally(() => {
+        $("pinSubmit").disabled = false;
+      });
+  });
+  $("pinBack").addEventListener("click", showNameStep);
 }
 
 $("checked").textContent = `数据核对日 ${data.checkedAt} · ${data.cohort} · ${data.graduateWindow}`;
@@ -350,12 +549,4 @@ $("legend").innerHTML = data.statuses.map((s) => {
   return `<span class="row-${slug}"><i style="background:var(--row-ink)"></i>${s}</span>`;
 }).join("");
 bind();
-
-const remembered = normalizeName(localStorage.getItem(WHO_KEY) || "");
-if (remembered && loadUsers().includes(remembered)) {
-  enterAs(remembered);
-} else {
-  showGate();
-  stats();
-  render();
-}
+showGate();

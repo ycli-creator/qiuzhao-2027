@@ -22,7 +22,7 @@
         </div>
       </div>
       <h1>秋招追踪 · 设计 / UX / 动效</h1>
-      <p class="lead">面向 2027 届。公司和招聘窗口共用；投递进度按名字分开存，换电脑选同一个名字即可继续。</p>
+      <p class="lead">面向 2027 届。公司和招聘窗口共用；进度按名字分开，进自己的空间要 8 位数字密码。</p>
       <p class="warn">截止日期和是否仍在招以官网为准。表内信息按 2026-09-01 能核到的公开材料整理，投之前点「官网」复核。</p>
     </header>
 
@@ -105,21 +105,35 @@
     </div>
 
     <footer>
-      公司和招聘信息共用。进度按名字同步到云端，你和朋友各改各的。
+      公司和招聘信息共用。进度加密后按名字存，没有密码看不到别人的记录。
     </footer>
   </div>
 
   <div id="gate" class="gate" hidden>
     <div class="gate-card">
-      <p class="kicker">先选空间</p>
-      <h2>这是谁的进度？</h2>
-      <p>公司和招聘窗口共用一份。投递进度只写在你选的名字下面；换电脑也选同一个名字。</p>
-      <div id="gateUsers" class="gate-users"></div>
-      <form id="gateForm" class="gate-form">
-        <input id="gateName" maxlength="16" placeholder="输入名字，例如 超" autocomplete="nickname" />
-        <button type="submit">进入</button>
-      </form>
-      <p id="gateLegacy" class="gate-note" hidden>这台设备上已有一份未归属的进度，会归到你这次输入的名字下。</p>
+      <div id="nameStep">
+        <p class="kicker">先选空间</p>
+        <h2>这是谁的进度？</h2>
+        <p>选名字后要设或输入 8 位数字密码。没有密码看不到、也改不了这份进度。</p>
+        <div id="gateUsers" class="gate-users"></div>
+        <form id="gateForm" class="gate-form">
+          <input id="gateName" maxlength="16" placeholder="输入名字，例如 超" autocomplete="nickname" />
+          <button type="submit">下一步</button>
+        </form>
+        <p id="gateLegacy" class="gate-note" hidden>这台设备上已有一份未加锁的进度，设密码后会归到这个名字下。</p>
+      </div>
+      <div id="pinStep" hidden>
+        <p class="kicker" id="pinKicker">密码</p>
+        <h2 id="pinTitle">设置 8 位密码</h2>
+        <p id="pinLead">请输入 8 位数字。换电脑也用这一组。</p>
+        <form id="pinForm" class="pin-form">
+          <input id="pinInput" type="password" inputmode="numeric" maxlength="8" placeholder="8 位数字" autocomplete="off" />
+          <input id="pinConfirm" type="password" inputmode="numeric" maxlength="8" placeholder="再输入一次" autocomplete="off" hidden />
+          <button type="submit" id="pinSubmit">进入</button>
+        </form>
+        <p id="pinError" class="gate-note pin-error" hidden></p>
+        <button type="button" id="pinBack" class="pin-back">返回选名字</button>
+      </div>
     </div>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
