@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>2027 届秋招 · 设计岗追踪</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="kicker">Private · 2027 campus</div>
+      <h1>秋招追踪 · 设计 / UX / 动效</h1>
+      <p class="lead">面向 2027 届。先扫公司、窗口、是否笔试面试，再记下自己的进度。进度只存在这台电脑，不要把这个仓库或页面公开。</p>
+      <p class="warn">截止日期和是否仍在招以官网为准。表内信息按 2026-09-01 能核到的公开材料整理，投之前点「官网」复核。</p>
+    </header>
+
+    <div id="stats" class="stats"></div>
+
+    <div class="toolbar">
+      <input id="q" type="search" placeholder="搜公司、岗位、城市、备注…" aria-label="搜索" />
+      <select id="industry" aria-label="行业">
+        <option value="all">全部行业</option>
+        <option>互联网</option>
+        <option>硬件</option>
+        <option>汽车</option>
+        <option>游戏</option>
+        <option>金融</option>
+        <option>芯片</option>
+        <option>外企</option>
+        <option>国企</option>
+      </select>
+      <select id="city" aria-label="城市">
+        <option value="all">全部城市</option>
+        <option value="北上广深杭">北上广深杭</option>
+        <option>北京</option>
+        <option>上海</option>
+        <option>广州</option>
+        <option>深圳</option>
+        <option>杭州</option>
+      </select>
+      <select id="hiring" aria-label="招聘状态">
+        <option value="all">招聘状态</option>
+        <option value="open">在招</option>
+        <option value="rolling">滚动</option>
+        <option value="closing">将截止</option>
+        <option value="unknown">待核</option>
+      </select>
+      <select id="mine" aria-label="我的进度">
+        <option value="all">我的进度</option>
+        <option>未投</option>
+        <option>已投</option>
+        <option>测评</option>
+        <option>笔试</option>
+        <option>一面</option>
+        <option>二面</option>
+        <option>三面</option>
+        <option>HR</option>
+        <option>意向</option>
+        <option>Offer</option>
+        <option>挂</option>
+        <option>拒</option>
+      </select>
+      <label class="toggle">
+        <input id="designOnly" type="checkbox" checked />
+        只看设计岗
+      </label>
+    </div>
+
+    <div class="meta-row">
+      <span id="checked"></span>
+      <span id="count"></span>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>公司</th>
+            <th>批次 / 窗口</th>
+            <th>设计相关岗</th>
+            <th>城市</th>
+            <th class="hide-sm">测评 / 笔试</th>
+            <th class="hide-sm">面试</th>
+            <th>招聘</th>
+            <th>我的进度</th>
+            <th>官网 / 备注</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+
+    <footer>
+      私有本地页。作品集：之后在 Yone 站点查看。Skills 目录：Works-2026。
+    </footer>
+  </div>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
