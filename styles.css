@@ -237,6 +237,11 @@ tr.row:hover { background: color-mix(in srgb, var(--row-bg) 70%, white); }
   background: var(--chip);
   border-radius: 999px;
 }
+.role.inferred {
+  background: #fff;
+  border: 1px dashed var(--line);
+  color: var(--mute);
+}
 a { color: inherit; }
 a.site {
   font-family: "Fira Code", ui-monospace, monospace;

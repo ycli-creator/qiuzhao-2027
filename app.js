@@ -44,8 +44,19 @@ const filters = {
   industry: "all",
   city: "all",
   hiring: "all",
-  mine: "all",
-  designOnly: true
+  role: "design",
+  mine: "all"
+};
+
+const extraRolesByIndustry = {
+  互联网: ["产品", "研发", "运营"],
+  游戏: ["产品", "研发"],
+  金融: ["产品", "研发"],
+  硬件: ["产品", "研发"],
+  汽车: ["产品", "研发"],
+  芯片: ["研发"],
+  外企: ["产品", "研发"],
+  国企: ["产品", "研发"]
 };
 
 function storeKey(name) {
@@ -414,8 +425,18 @@ function isDesignRole(role) {
   return /UX|视觉|动效|品牌|美术|工业/.test(role);
 }
 
+function inferredRoles(c) {
+  return (extraRolesByIndustry[c.industry] || []).filter((role) => !c.roles.includes(role));
+}
+
+function allRoles(c) {
+  return c.roles.concat(inferredRoles(c));
+}
+
 function rowVisible(c) {
-  if (filters.designOnly && !c.roles.some(isDesignRole)) return false;
+  const roles = allRoles(c);
+  if (filters.role === "design" && !roles.some(isDesignRole)) return false;
+  if (filters.role !== "all" && filters.role !== "design" && !roles.includes(filters.role)) return false;
   if (filters.industry !== "all" && c.industry !== filters.industry) return false;
   if (filters.hiring !== "all" && c.hiring !== filters.hiring) return false;
   const status = mine[c.id] || "未投";
@@ -427,7 +448,7 @@ function rowVisible(c) {
     if (!c.cities.some((city) => wanted.includes(city))) return false;
   }
   if (filters.q) {
-    const hay = [c.name, c.industry, c.batch, c.roles.join(" "), c.cities.join(" "), c.note]
+    const hay = [c.name, c.industry, c.batch, roles.join(" "), c.cities.join(" "), c.note]
       .join(" ")
       .toLowerCase();
     if (!hay.includes(filters.q)) return false;
@@ -460,7 +481,7 @@ function render() {
   const rows = data.companies.filter(rowVisible);
   $("count").textContent = `显示 ${rows.length} / ${data.companies.length}`;
   if (!rows.length) {
-    $("rows").innerHTML = `<tr><td colspan="9" class="empty">没有匹配的公司。关掉「只看设计岗」或清空筛选。</td></tr>`;
+    $("rows").innerHTML = `<tr><td colspan="9" class="empty">没有匹配的公司。把岗位改成「全部岗位」或清空筛选。</td></tr>`;
     return;
   }
   $("rows").innerHTML = rows.map((c) => {
@@ -476,7 +497,7 @@ function render() {
           <span class="sub">${c.tier} · ${c.industry}</span>
         </td>
         <td>${c.batch}<span class="sub">${c.window}</span></td>
-        <td><div class="roles">${c.roles.map((r) => `<span class="role">${r}</span>`).join("")}</div></td>
+        <td><div class="roles">${c.roles.map((r) => `<span class="role">${r}</span>`).join("")}${inferredRoles(c).map((r) => `<span class="role inferred">${r}</span>`).join("")}</div></td>
         <td>${c.cities.join(" / ")}</td>
         <td class="hide-sm">${c.test}<span class="sub">笔试：${c.written}</span></td>
         <td class="hide-sm">${c.interview}</td>
@@ -498,15 +519,11 @@ function bind() {
     filters.q = e.target.value.trim().toLowerCase();
     render();
   });
-  ["industry", "city", "hiring", "mine"].forEach((key) => {
+  ["industry", "city", "hiring", "role", "mine"].forEach((key) => {
     $(key).addEventListener("change", (e) => {
       filters[key] = e.target.value;
       render();
     });
-  });
-  $("designOnly").addEventListener("change", (e) => {
-    filters.designOnly = e.target.checked;
-    render();
   });
   $("rows").addEventListener("change", (e) => {
     const sel = e.target.closest("select.mine");
